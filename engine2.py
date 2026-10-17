@@ -13,7 +13,7 @@ import numpy as np, pandas as pd
 DATA = Path(__file__).parent / "data"
 WATCH = "AAOI BE IREN LITE NBIS INFQ CRWV AXTI SPCX SNDK MU ARM AMD NVDA IONQ WULF WDC STX".split()
 CONTROL = "AAPL MSFT GOOGL AMZN META AVGO TSLA ORCL CRM NFLX".split()
-EARN = json.load(open(DATA / "earnings.json"))
+EARN = json.load(open(DATA / "earnings.json")) if (DATA / "earnings.json").exists() else {}  # the nightly job sets E.EARN itself
 BENCH = ["SPY", "QQQ", "SMH", "VIX", "IWM"]
 
 def load_panel(names):

@@ -1,0 +1,44 @@
+# The stock-bot nightly job. Runs here (life-inbox) so it can write stocks/ with the repo's own token; the code is
+# checked out from the public repo Farhaanp9/stock-bot every run. Nothing in it can reach a brokerage.
+name: stocks nightly
+on:
+  schedule:
+    - cron: "45 1 * * 2-6"   # 01:45 UTC Tue–Sat = 6:45 PM PDT / 5:45 PM PST, Mon–Fri evenings, after the 1 PM PT close
+  workflow_dispatch:
+    inputs:
+      screen:
+        description: "also print the monthly mechanical screen"
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency: stocks
+jobs:
+  board:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Farhaanp9/stock-bot
+          path: bot
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: bot/cache
+          key: stocks-cache-${{ github.run_id }}
+          restore-keys: stocks-cache-
+      - run: pip install -q -r bot/requirements.txt
+      - name: build the board
+        run: python bot/nightly.py --out stocks --cache bot/cache --positions stocks/positions.md ${{ inputs.screen && '--screen' || '' }}
+      - name: commit
+        run: |
+          git config user.name "stock-bot"
+          git config user.email "stock-bot@users.noreply.github.com"
+          git add stocks
+          git commit -m "stocks: board for $(date -u +%F)" || echo "nothing to commit"
+          git pull --rebase
+          git push
