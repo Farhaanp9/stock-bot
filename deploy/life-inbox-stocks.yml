@@ -3,7 +3,7 @@
 name: stocks nightly
 on:
   schedule:
-    - cron: "45 1 * * 2-6"   # 01:45 UTC Tue–Sat = 6:45 PM PDT / 5:45 PM PST, Mon–Fri evenings, after the 1 PM PT close
+    - cron: "45 1 * * 1-6"   # 01:45 UTC Mon–Sat = 6:45 PM PDT / 5:45 PM PST, Sun–Fri evenings. Sunday's run is the week-ahead edition from Friday's close
   workflow_dispatch:
     inputs:
       screen:

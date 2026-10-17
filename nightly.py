@@ -173,6 +173,7 @@ def main():
     ap.add_argument("--out", default="stocks"); ap.add_argument("--cache", default="cache")
     ap.add_argument("--positions", default=None); ap.add_argument("--screen", action="store_true")
     ap.add_argument("--date", default=None, help="board for this close instead of the last one")
+    ap.add_argument("--weekahead", action="store_true", help="Sunday edition: Friday's board plus the week ahead (automatic on a Sunday PT)")
     a = ap.parse_args()
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); cache = Path(a.cache); cache.mkdir(parents=True, exist_ok=True)
     now = dt.datetime.now(PT)
@@ -191,7 +192,10 @@ def main():
     exp = now.date() if (now.weekday() < 5 and now.hour * 60 + now.minute >= 13 * 60 + 30) else now.date() - dt.timedelta(days=1)
     while exp.weekday() >= 5:
         exp -= dt.timedelta(days=1)
-    stale = (not a.date) and d.date() < exp
+    weekahead = a.weekahead or now.weekday() == 6
+    stale = (not a.date) and (not weekahead) and d.date() < exp
+    sunday = now.date() + dt.timedelta(days=(6 - now.weekday()) % 7)  # this Sunday (today if Sunday)
+    wk_mon = sunday + dt.timedelta(days=1); wk_fri = sunday + dt.timedelta(days=5)
 
     earn, earn_asof = cached(cache, "earnings", 1, fetch_earnings)
     fund, fund_asof = cached(cache, "fundamentals", 7, fetch_fundamentals)
@@ -287,13 +291,14 @@ def main():
         return dict(stop=c * (1 - x["S"]), trail=x["trail"], N=x["N"], line=c - 2 * r["atr"], void=c * (1 + RULES["void"]))
 
     dname = d.strftime("%a %Y-%m-%d")
+    title = (f"Week-ahead stock brief — Sun {sunday} (from Friday's close, {d.date()})" if weekahead else f"Stock brief — close of {dname}")
     data_line = (f"Data: Yahoo Finance daily bars (single source; a second feed is an open item), last session {d.date()}" +
                  (f" — **today's close ({exp}) is not in the feed yet: holiday or feed delay; this board is for {d.date()}**" if stale else "") +
                  f". Earnings dates as of {earn_asof or 'unknown'}; fundamentals as of {fund_asof or 'unknown'}. Closes: {bench_chk}. " +
                  ("Sanity: OK." if not sanity else "**Sanity flags:** " + "; ".join(sanity)))
 
     # ---------- brief.md (phone-length) ----------
-    B = [f"# Stock brief — close of {dname}", "", data_line, "",
+    B = [f"# {title}", "", data_line, "",
          f"**Regime:** SMH {smh[d]:.1f}, {pct(smh[d]/smh200-1)} vs its 200-day ({smh200:.0f}) → **{slots} slot{'s' if slots != 1 else ''}** for tomorrow's entries"
          + (" (SMH is below its 200-day: one slot, the throttle is on)" if not above200 else "")
          + f". SMH {pct(smh[d]/smh.rolling(50).mean()[d]-1)} vs 50-day, QQQ {pct(qqq[d]/qqq.rolling(50).mean()[d]-1)}. VIX **{vix[d]:.1f}** (week ago {vix.iloc[i-5]:.1f}"
@@ -304,6 +309,15 @@ def main():
          + " · IWM " + pct(C_all["IWM"][d]/C_all["IWM"].iloc[i-1]-1) + " / " + pct(C_all["IWM"][d]/C_all["IWM"].iloc[i-5]-1)
          + (". Next macro: " + " · ".join(f"{w} {dd}" for dd, w in macro) if macro else ""), ""]
     fresh = [t for t in sigs if t not in pos_names]
+    if weekahead:
+        wk_earn = sorted((r["earn"], t) for t, r in rows.items() if r["earn"] and str(wk_mon) <= r["earn"] <= str(wk_fri))
+        wk_macro = [(dd, w) for dd, w in MACRO if str(wk_mon) <= dd <= str(wk_fri)]
+        wk_lock = [(t, r["lock"]) for t, r in rows.items() if r["lock"] and str(wk_mon) <= r["lock"] <= str(wk_fri)]
+        B.append(f"## The week ahead, {wk_mon.strftime('%b %-d')} – {wk_fri.strftime('%b %-d')}")
+        B.append("- Earnings on the list: " + (" · ".join(f"**{t}** {e}" for e, t in wk_earn) if wk_earn else "none") + ". Each name is skipped from 5 sessions before to 3 after, so these go quiet now.")
+        B.append("- Macro: " + (" · ".join(f"{w} {dd}" for dd, w in wk_macro) if wk_macro else "nothing on the list this week") + ". Lock-ups: " + (", ".join(f"{t} {l}" for t, l in wk_lock) if wk_lock else "none") + ".")
+        B.append(f"- Monday's entries use Friday's signals below and {slots} slot{'s' if slots != 1 else ''}; a signal is void if the name opens more than 3% above Friday's close. Earnings for the names above move the list fastest this week; the board rebuilds Monday evening.")
+        B.append("")
     B.append(f"## Signals tonight: {len(sigs)}" + (f" — ranked by the rule's score; {slots} slot{'s' if slots != 1 else ''} by the regime rule, so the top {min(slots, len(fresh))} fill" + (f" ({len(sigs) - len(fresh)} already held: the rules never add to a position)" if len(sigs) > len(fresh) else "") + "; open positions keep their own exits" if sigs else ""))
     if not sigs:
         B.append("- No name meets a rule tonight without a skip. Nothing to buy by the rules; the rest of this is context.")
@@ -388,7 +402,7 @@ def main():
     B.append("Taps: **Placing orders tomorrow** · **Sitting out** · **Rule question for Claude**")
 
     # ---------- latest.md (full board) ----------
-    O = [f"# Stock board — close of {dname}", "", data_line, "", "## Market", "", "| Index | Close | 1d | 5d | 21d | vs 50-day | vs 200-day |", "|---|---|---|---|---|---|---|"]
+    O = [f"# Stock board — close of {dname}" + (f" (week-ahead edition, Sun {sunday})" if weekahead else ""), "", data_line, "", "## Market", "", "| Index | Close | 1d | 5d | 21d | vs 50-day | vs 200-day |", "|---|---|---|---|---|---|---|"]
     for t in ["SPY", "QQQ", "SMH", "IWM"]:
         s = C_all[t]
         O.append(f"| {t} | {s[d]:.1f} | {pct(s[d]/s.iloc[i-1]-1)} | {pct(s[d]/s.iloc[i-5]-1)} | {pct(s[d]/s.iloc[i-21]-1)} | {pct(s[d]/s.rolling(50).mean()[d]-1)} | {pct(s[d]/s.rolling(200).mean()[d]-1)} |")
@@ -433,8 +447,8 @@ def main():
 
     (out / "brief.md").write_text("\n".join(B) + "\n")
     (out / "latest.md").write_text("\n".join(O) + "\n")
-    (out / f"{d.date()}.md").write_text("\n".join(O) + "\n")
-    log(f"wrote {out}/brief.md ({len(B)} lines), latest.md ({len(O)} lines); signals={sigs} skipped={skipped_sigs} slots={slots} stale={stale}")
+    (out / f"{sunday if weekahead else d.date()}.md").write_text("\n".join(O) + "\n")
+    log(f"weekahead={weekahead} wrote {out}/brief.md ({len(B)} lines), latest.md ({len(O)} lines); signals={sigs} skipped={skipped_sigs} slots={slots} stale={stale}")
 
 
 if __name__ == "__main__":
