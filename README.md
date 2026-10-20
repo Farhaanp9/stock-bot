@@ -2,6 +2,8 @@
 
 Every weekday evening after the US close this job pulls daily prices for Farhaan's watchlist, applies a fixed set of rules, and writes three markdown files into his `life-inbox` repo. Muse (his Meta agent) reads them at 10 PM PT, adds what the news says moved each flagged name, and pushes the brief to his phone. He reads it, does his own research, and places (or doesn't place) his own orders in the morning.
 
+The brief is written in plain words (the full numbers and the rule jargon stay in `latest.md`).
+
 **Nothing here trades, holds a brokerage login, or connects to any account. Every number comes from a data feed; the rules are code; the only words a model writes are Muse's "what sources say" lines.**
 
 ## What it is

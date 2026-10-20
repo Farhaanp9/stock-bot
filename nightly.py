@@ -2,7 +2,7 @@
 Every number here comes from a data feed; no model writes anything in this file. Nothing here can reach a brokerage.
 
 Usage: python nightly.py --out stocks [--cache cache] [--positions stocks/positions.md] [--screen] [--date YYYY-MM-DD]
-Writes: <out>/brief.md (phone-length, Muse pushes this), <out>/latest.md (the full board), <out>/YYYY-MM-DD.md (copy of the board).
+Writes: <out>/brief.md (phone-length, plain words, Muse pushes this), <out>/latest.md (the full board), <out>/YYYY-MM-DD.md (copy of the board).
 Rules: projects/stock-bot/PLAN.md round 3 (2026-10-17). Engine code: engine2.py. Names: universe.py.
 """
 import argparse, json, re, sys, time, datetime as dt, urllib.request, urllib.parse, xml.etree.ElementTree as ET
@@ -297,107 +297,145 @@ def main():
                  f". Earnings dates as of {earn_asof or 'unknown'}; fundamentals as of {fund_asof or 'unknown'}. Closes: {bench_chk}. " +
                  ("Sanity: OK." if not sanity else "**Sanity flags:** " + "; ".join(sanity)))
 
-    # ---------- brief.md (phone-length) ----------
-    B = [f"# {title}", "", data_line, "",
-         f"**Regime:** SMH {smh[d]:.1f}, {pct(smh[d]/smh200-1)} vs its 200-day ({smh200:.0f}) → **{slots} slot{'s' if slots != 1 else ''}** for tomorrow's entries"
-         + (" (SMH is below its 200-day: one slot, the throttle is on)" if not above200 else "")
-         + f". SMH {pct(smh[d]/smh.rolling(50).mean()[d]-1)} vs 50-day, QQQ {pct(qqq[d]/qqq.rolling(50).mean()[d]-1)}. VIX **{vix[d]:.1f}** (week ago {vix.iloc[i-5]:.1f}"
-         + ("; over 30: dips bounced least in this zone" if vix[d] > 30 else "") + f"). 10-yr **{tnx[d]:.2f}%**.",
-         "SPY " + pct(C_all["SPY"][d]/C_all["SPY"].iloc[i-1]-1) + " / 5d " + pct(C_all["SPY"][d]/C_all["SPY"].iloc[i-5]-1)
-         + " · QQQ " + pct(qqq[d]/qqq.iloc[i-1]-1) + " / " + pct(qqq[d]/qqq.iloc[i-5]-1)
-         + " · SMH " + pct(smh[d]/smh.iloc[i-1]-1) + " / " + pct(smh[d]/smh.iloc[i-5]-1)
-         + " · IWM " + pct(C_all["IWM"][d]/C_all["IWM"].iloc[i-1]-1) + " / " + pct(C_all["IWM"][d]/C_all["IWM"].iloc[i-5]-1)
-         + (". Next macro: " + " · ".join(f"{w} {dd}" for dd, w in macro) if macro else ""), ""]
+    # ---------- brief.md (phone-length, plain words; the jargon and the full numbers live in latest.md) ----------
+    def money(x): return f"${x:,.2f}"
+    def mdy(s):
+        if not s: return "—"
+        if isinstance(s, str): s = dt.date.fromisoformat(s[:10])
+        return s.strftime("%b %-d")
+    def who(t): return f"{NAMES[t]} ({t})" if t in NAMES and NAMES[t] != t else t
+    def plainskip(r):
+        w = []
+        if r["eskip"]: w.append(f"earnings {mdy(r['earn'])}" if r["earn"] else "just reported earnings")
+        if r["gskip"]: w.append("a 20% one-day crash, not a dip")
+        if r["nskip"]: w.append("bad news this week, see the flags")
+        if r["lskip"]: w.append(f"lock-up expiry {mdy(r['lock'])}")
+        return ", ".join(w) or "—"
+    regime_dense = [
+        f"**Regime:** SMH {smh[d]:.1f}, {pct(smh[d]/smh200-1)} vs its 200-day ({smh200:.0f}) → **{slots} slot{'s' if slots != 1 else ''}** for tomorrow's entries"
+        + (" (SMH is below its 200-day: one slot, the throttle is on)" if not above200 else "")
+        + f". SMH {pct(smh[d]/smh.rolling(50).mean()[d]-1)} vs 50-day, QQQ {pct(qqq[d]/qqq.rolling(50).mean()[d]-1)}. VIX **{vix[d]:.1f}** (week ago {vix.iloc[i-5]:.1f}"
+        + ("; over 30: dips bounced least in this zone" if vix[d] > 30 else "") + f"). 10-yr **{tnx[d]:.2f}%**.",
+        "SPY " + pct(C_all["SPY"][d]/C_all["SPY"].iloc[i-1]-1) + " / 5d " + pct(C_all["SPY"][d]/C_all["SPY"].iloc[i-5]-1)
+        + " · QQQ " + pct(qqq[d]/qqq.iloc[i-1]-1) + " / " + pct(qqq[d]/qqq.iloc[i-5]-1)
+        + " · SMH " + pct(smh[d]/smh.iloc[i-1]-1) + " / " + pct(smh[d]/smh.iloc[i-5]-1)
+        + " · IWM " + pct(C_all["IWM"][d]/C_all["IWM"].iloc[i-1]-1) + " / " + pct(C_all["IWM"][d]/C_all["IWM"].iloc[i-5]-1)
+        + (". Next macro: " + " · ".join(f"{w} {dd}" for dd, w in macro) if macro else "")]
+    vix_wk = vix.iloc[i-5]
+    nerves = f"VIX {vix[d]:.0f}, " + ("up from" if vix[d] > vix_wk + 0.5 else "down from" if vix[d] < vix_wk - 0.5 else "about the same as") + f" {vix_wk:.0f} a week ago" + (". Over 30 is the zone where dips bounced least" if vix[d] > 30 else "")
+    spy = C_all["SPY"]
+    B = [f"# {title}", ""]
+    if stale or sanity:
+        B += [data_line, ""]
+    else:
+        B += [f"Prices: Yahoo Finance, close of {d.date()}. Checks passed.", ""]
+    B.append(f"**Market:** Chips (SMH) are {pct(smh[d]/smh200-1,0)} vs their long-term trend, so the rules allow up to **{slots} new buy{'s' if slots != 1 else ''}** tomorrow"
+             + (" (below trend: the throttle is on, one slot)" if not above200 else "")
+             + f". Short term they're {pct(smh[d]/smh.rolling(50).mean()[d]-1,0)} vs their 50-day average. Nerves: {nerves}. 10-year rate {tnx[d]:.2f}%. "
+             + f"Today: S&P {pct(spy[d]/spy.iloc[i-1]-1)}, Nasdaq {pct(qqq[d]/qqq.iloc[i-1]-1)}, chips {pct(smh[d]/smh.iloc[i-1]-1)}. This week: S&P {pct(spy[d]/spy.iloc[i-5]-1)}, Nasdaq {pct(qqq[d]/qqq.iloc[i-5]-1)}, chips {pct(smh[d]/smh.iloc[i-5]-1)}."
+             + (" Coming up: " + " · ".join(f"{w} {mdy(dd)}" for dd, w in macro) + "." if macro else ""))
+    B.append("")
     fresh = [t for t in sigs if t not in pos_names]
     if weekahead:
         wk_earn = sorted((r["earn"], t) for t, r in rows.items() if r["earn"] and str(wk_mon) <= r["earn"] <= str(wk_fri))
         wk_macro = [(dd, w) for dd, w in MACRO if str(wk_mon) <= dd <= str(wk_fri)]
         wk_lock = [(t, r["lock"]) for t, r in rows.items() if r["lock"] and str(wk_mon) <= r["lock"] <= str(wk_fri)]
-        B.append(f"## The week ahead, {wk_mon.strftime('%b %-d')} – {wk_fri.strftime('%b %-d')}")
-        B.append("- Earnings on the list: " + (" · ".join(f"**{t}** {e}" for e, t in wk_earn) if wk_earn else "none") + ". Each name is skipped from 5 sessions before to 3 after, so these go quiet now.")
-        B.append("- Macro: " + (" · ".join(f"{w} {dd}" for dd, w in wk_macro) if wk_macro else "nothing on the list this week") + ". Lock-ups: " + (", ".join(f"{t} {l}" for t, l in wk_lock) if wk_lock else "none") + ".")
-        B.append(f"- Monday's entries use Friday's signals below and {slots} slot{'s' if slots != 1 else ''}; a signal is void if the name opens more than 3% above Friday's close. Earnings for the names above move the list fastest this week; the board rebuilds Monday evening.")
+        B.append(f"## This week, {wk_mon.strftime('%b %-d')} – {wk_fri.strftime('%b %-d')}")
+        B.append("- Earnings on your list: " + (" · ".join(f"**{t}** {mdy(e)}" for e, t in wk_earn) if wk_earn else "none") + ". A name is off the buy list from 5 trading days before its earnings to 3 after, so these go quiet now.")
+        B.append("- Big dates: " + (" · ".join(f"{w} {mdy(dd)}" for dd, w in wk_macro) if wk_macro else "nothing on the list this week") + ". Lock-up expiries: " + (", ".join(f"{t} {mdy(l)}" for t, l in wk_lock) if wk_lock else "none") + ".")
+        B.append(f"- Monday's buys come from Friday's signals below, {slots} slot{'s' if slots != 1 else ''}. A signal is off if the name opens more than 3% above Friday's close. The board rebuilds Monday evening.")
         B.append("")
-    B.append(f"## Signals tonight: {len(sigs)}" + (f" — ranked by the rule's score; {slots} slot{'s' if slots != 1 else ''} by the regime rule, so the top {min(slots, len(fresh))} fill" + (f" ({len(sigs) - len(fresh)} already held: the rules never add to a position)" if len(sigs) > len(fresh) else "") + "; open positions keep their own exits" if sigs else ""))
-    if not sigs:
-        B.append("- No name meets a rule tonight without a skip. Nothing to buy by the rules; the rest of this is context.")
-    for t in sigs:
-        r = rows[t]
-        held = " **Already held: not a new slot; the rules never add. Its exit levels are under His positions.**" if t in pos_names else ""
+    B.append("## Buy at tomorrow's open" + (f" ({slots} slot{'s' if slots != 1 else ''})" if fresh else ""))
+    if not fresh:
+        B.append("- Nothing to buy by the rules tonight." + (" The only signal is a name you already hold, and the rules never add to a position." if sigs else ""))
+    for n, t in enumerate(fresh[:slots], 1):
+        r = rows[t]; c = r["close"]
         if r["sigD"]:
             lv = levels(t, "D")
-            B.append(f"- **{t} — D, deep dip.**{held} Close {r['close']:.2f}, {pct(-r['off21'],0)} off its 21-day high ({r['hi21']:.2f}; threshold {pct(-r['thresh'],0)}), {num(r['rankD'])}× its monthly vol. "
-                     f"Above 200-day: **{'yes (the flag that bounced best)' if r['v200'] > 0 else 'no (below: bounced half as much)'}**. 5d {pct(r['d5'],0)} vs sector-explained {pct(r['d5']-r['res'],0)}; volume {num(r['vr'])}×. "
-                     f"Levels: hard stop **{lv['stop']:.2f}** · trail: sell when 8% off the highest close after entry · clock 20 sessions · line in the sand {lv['line']:.2f} · **void if it opens above {lv['void']:.2f}**.")
-        elif r["sigL"]:
+            B.append(f"{n}. **{who(t)} {money(c)}.** Down {r['off21']*100:.0f}% from its 3-week high ({money(r['hi21'])}), {num(r['rankD'])} times its usual monthly swing, which is what the dip rule wants. "
+                     f"This week {pct(r['d5'],0)}, against {pct(r['d5']-r['res'],0)} that the sector explains; volume {num(r['vr'])}× normal. "
+                     + ("Still above its long-term trend, the setup that bounced best. " if r['v200'] > 0 else "Below its long-term trend, where bounces ran half-size. ")
+                     + f"**Get out at {money(lv['stop'])}** or lower, or once it falls 8% from its best close after you buy, or after 20 trading days. Skip it if it opens above {money(lv['void'])}.")
+        else:
             lv = levels(t, "L")
-            B.append(f"- **{t} — L, leader pullback.**{held} Rank {int(r['rk63'])} by 63-day return ({pct(r['d63'],0)}, {pct(r['rs63'],0)} vs SMH), above its 50-day, RSI(2) {num(r['rsi2'],0)}, {pct(-r['off21'],0)} off its 21-day high. "
-                     f"Levels: hard stop **{lv['stop']:.2f}** · trail: sell when 10% off the highest close after entry · clock 40 sessions · line in the sand {lv['line']:.2f} · **void if it opens above {lv['void']:.2f}**.")
+            B.append(f"{n}. **{who(t)} {money(c)}.** One of the strongest names on your list (#{int(r['rk63'])} over 3 months, {pct(r['d63'],0)}, beating chips by {pct(r['rs63'],0)}), taking a short breather: {pct(-r['off21'],0)} off its 3-week high and oversold on the 2-day gauge. "
+                     f"**Get out at {money(lv['stop'])}** or lower, or once it falls 10% from its best close after you buy, or after 40 trading days. Skip it if it opens above {money(lv['void'])}.")
+    if len(fresh) > slots:
+        B.append("- Also fired, but no slot left tonight: " + ", ".join(who(t) for t in fresh[slots:]) + ".")
     if skipped_sigs:
-        B.append("- Fired but **skipped**: " + "; ".join(f"{t} ({'D' if rows[t]['sigD'] else 'L'}: {skipwhy(rows[t])})" for t in skipped_sigs) + ".")
+        B.append("- Fired, skipped on purpose: " + "; ".join(f"{who(t)} ({plainskip(rows[t])})" for t in skipped_sigs) + ".")
     B.append("")
-    close_lines = []
-    for t in near_d:
-        r = rows[t]; close_lines.append(f"{t} {pct(-r['off21'],0)} vs {pct(-r['thresh'],0)} needed" + (" (skip anyway: " + skipwhy(r) + ")" if r["skip"] else ""))
-    B.append("## Close, not firing")
-    B.append("- Dips near the line: " + ("; ".join(close_lines) if close_lines else "none") + ".")
-    B.append("- Leaders without a pullback (top 6, above 50-day, beating SMH): " + (", ".join(f"{t} (RSI2 {num(rows[t]['rsi2'],0)})" for t in leaders_quiet) if leaders_quiet else "none") + ".")
+    B.append("## Watching, not buying")
+    near_ok = [t for t in near_d if not rows[t]["skip"]]; near_skip = [t for t in near_d if rows[t]["skip"]]
+    B.append("- Almost there: " + ("; ".join(f"{t} ({pct(-rows[t]['off21'],0)}, the rule needs {pct(-rows[t]['thresh'],0)})" for t in near_ok) if near_ok else "none") + ".")
+    if near_skip:
+        B.append("- Close, but would be skipped anyway: " + "; ".join(f"{t} ({plainskip(rows[t])})" for t in near_skip) + ".")
     not_leaders = [t for t in leaders8 if int(rows[t]["rk63"]) <= RULES["top"] and not rows[t]["leader"]]
-    if not_leaders:
-        B.append("- In the top 6 but not leaders: " + ", ".join(f"{t} ({'below 50-day' if rows[t]['v50'] <= 0 else 'lagging SMH'})" for t in not_leaders) + ".")
+    B.append("- Strongest names on the list: " + (", ".join(who(t) for t in leaders_quiet) + ", running, no pullback to buy yet" if leaders_quiet else "")
+             + ("; " if leaders_quiet and not_leaders else "")
+             + (", ".join(t for t in not_leaders) + " lead over 3 months but sit below their 50-day, so the rule doesn't count them" if not_leaders else "")
+             + ("none qualify tonight" if not leaders_quiet and not not_leaders else "") + ".")
     B.append("")
-    B.append("## His positions")
+    B.append("## Your positions")
+    pos_lines = []
     if not positions:
-        B.append("- None on file. Tell Muse “bought X at Y” or “sold X at Y” and it lands in stocks/positions.md.")
+        pos_lines.append("- None on file. Tell Muse “bought X at Y” or “sold X at Y” and it lands in stocks/positions.md.")
     for p in positions:
         t = p["name"]
         if t not in rows and t in C_all:
-            B.append(f"- **{t}** ({p['eng']}): {C_all[t][d]:.2f}, not on the list, no rule levels."); continue
-        if t not in rows: B.append(f"- **{t}**: no data."); continue
+            pos_lines.append(f"- **{who(t)} {money(C_all[t][d])}**: not on the list, so no rule levels."); continue
+        if t not in rows: pos_lines.append(f"- **{t}**: no data."); continue
         r = rows[t]; c = r["close"]
-        line = f"- **{t}** ({p['eng']}{', entry ' + f'{p['entry']:.2f}' if p['entry'] else ', entry not given'}{', since ' + p['since'] if p['since'] else ''}). Close {c:.2f} ({pct(r['d1'])} today, {pct(r['d5'])} on 5 days), {pct(-r['off21'],0)} off its 21-day high {r['hi21']:.2f}, {'above' if r['v50'] > 0 else 'below'} 50-day, {'above' if r['v200'] > 0 else 'below'} 200-day, RSI(2) {num(r['rsi2'],0)}."
+        line = (f"- **{who(t)} {money(c)}** ({pct(r['d1'])} today, {pct(r['d5'])} this week), {r['off21']*100:.0f}% under its 3-week high, "
+                f"{'above' if r['v50'] > 0 else 'below'} its 50-day, {'above' if r['v200'] > 0 else 'below'} its long-term trend.")
         if p["entry"]:
-            line += f" From entry {pct(c/p['entry']-1)}."
+            line += f" From your entry {money(p['entry'])}{' on ' + mdy(p['since']) if p['since'] else ''}: **{pct(c/p['entry']-1)}**."
             since_c = C[t].loc[p["since"]:d] if p["since"] else C[t].loc[:d].iloc[-1:]
             hi = float(since_c.max()) if len(since_c) else c
             held = len(since_c) - 1 if p["since"] else None
-            for eng in (["L", "D"] if p["eng"] == "own" else [p["eng"]]):
+            for eng in (["D"] if p["eng"] == "own" else [p["eng"]]):
                 x = RULES["exits"][eng]
-                line += f" Under {eng} exits: hard stop {p['entry']*(1-x['S']):.2f}, trail exit {hi*(1-x['trail']):.2f} (highest close since entry {hi:.2f})" + (f", clock {held}/{x['N']} sessions" if held is not None else "") + "."
+                line += (f" The rules would sell at {money(p['entry']*(1-x['S']))} (hard stop) or at {money(hi*(1-x['trail']))} ({int(x['trail']*100)}% off its best close since you bought, {money(hi)})"
+                         + (f"; day {held} of the {x['N']}-day clock" if held is not None else "") + ".")
         else:
-            line += f" Dip rule for it: threshold {pct(-r['thresh'],0)}, {'FIRING' if r['sigD'] else 'not firing'}. If it were a fresh D trade from here: stop {c*0.9:.2f}, line {c-2*r['atr']:.2f}."
-        if r["earn"]: line += f" Earnings {r['earn']} ({r['days_to']} sessions){'; inside the skip window' if r['eskip'] else ''}."
-        if t in flags: line += " **News flag** (below)."
-        B.append(line)
+            line += (f" Its dip rule is {'firing again, but the rules never add to a position' if r['sigD'] else 'not firing'}. "
+                     f"If you were running the rules on it from here: out below {money(c*0.9)}.")
+        if r["earn"]: line += f" Earnings {mdy(r['earn'])} ({r['days_to']} trading days away){', inside the no-buy window' if r['eskip'] else ''}."
+        if t in flags: line += " **Bad news flagged below.**"
+        pos_lines.append(line)
+    B += pos_lines
     B.append("")
-    if upcoming or any(rows[t]["lskip"] for t in rows):
-        B.append("## Earnings within 10 sessions, and lock-ups")
-        B.append("- " + " · ".join(f"{t} {e}" for e, t in upcoming) + (" · lock-ups: " + ", ".join(f"{t} {rows[t]['lock']}" for t in rows if rows[t]["lskip"]) if any(rows[t]["lskip"] for t in rows) else "") + ". A name is skipped from 5 sessions before earnings to 3 after.")
+    lockups = [t for t in rows if rows[t]["lskip"]]
+    if upcoming or lockups:
+        B.append("## Dates to know")
+        B.append("- Earnings soon: " + (" · ".join(f"{t} {mdy(e)}" for e, t in upcoming) if upcoming else "none") + (". Lock-up expiries: " + ", ".join(f"{t} {mdy(rows[t]['lock'])}" for t in lockups) if lockups else "") + ". A name is off the buy list from 5 trading days before its earnings to 3 after.")
         B.append("")
     if flags:
-        B.append("## News flags (SKIP by rule; he can disagree in the morning, the log records it)")
+        B.append("## Bad-news flags (the rules skip these; you can disagree in the morning)")
         for t, fl in flags.items():
             for dd, src, title in fl[:2]:
-                B.append(f"- **{t}** {dd} · {src}: {title}")
+                B.append(f"- **{t}** {mdy(dd)} · {src}: {title}")
+        B.append("")
+    screen_lines = []
+    if screen:
+        screen_lines.append("- Screen: " + ", ".join(f"{t} {pct(screen['ret'][t],0)}" for t in screen["picks"]) + ".")
+        both = [t for t in WATCH if t in screen["picks"]]; only_screen = [t for t in screen["picks"] if t not in WATCH]
+        only_his = [f"{t} (#{screen['his_rank'][t]})" if screen["his_rank"][t] else f"{t} (not eligible)" for t in WATCH if t not in screen["picks"]]
+        screen_lines.append(f"- On both: {', '.join(both) or 'none'}. On the screen, not your list: {', '.join(only_screen) or 'none'}. Your list, not on the screen: {', '.join(only_his)}.")
+        B.append(f"## Monthly check on your list (top 18 of {screen['n_ok']} names by 6-month gain; price over $5, $50M traded a day). A check, not a rule")
+        B += screen_lines
+        B.append("- When the two disagree for a month or two, the sector call is the thing to re-examine.")
         B.append("")
     research = [t for t in sigs] + [t for t in near_d if t not in sigs][:2] + [t for t in pos_names if t in rows and t not in sigs]
-    B.append("## For Muse to research (sources, not causes)")
+    B.append("## For Muse only (research list; not forwarded)")
     if not research:
-        B.append("- Nothing fired. One line on the sector day (SMH, memory, AI capex) is enough.")
+        B.append("- Nothing fired. One line on the sector day (chips, memory, AI capex) is enough.")
     for t in research:
         r = rows[t]; why = "signal" if t in sigs else ("near the dip line" if t in near_d else "his position")
         hl = "; ".join(f"{src}: {title}" for dd, src, title, link in heads.get(t, [])[:3]) or "no headlines found"
         B.append(f"- **{t}** ({why}): what moved it in the last 5 days ({pct(r['d5'],0)}; sector-explained {pct(r['d5']-r['res'],0)}); any offering, downgrade, guidance change, lock-up. Recent: {hl}.")
     B.append("")
-    if screen:
-        B.append(f"## Monthly mechanical screen (top 18 of {screen['n_ok']} names by 6-month return; price ≥ $5, $50M/day). A check on his list, not a rule")
-        B.append("- Screen: " + ", ".join(f"{t} {pct(screen['ret'][t],0)}" for t in screen["picks"]) + ".")
-        both = [t for t in WATCH if t in screen["picks"]]; only_screen = [t for t in screen["picks"] if t not in WATCH]
-        only_his = [f"{t} (#{screen['his_rank'][t]})" if screen["his_rank"][t] else f"{t} (not eligible)" for t in WATCH if t not in screen["picks"]]
-        B.append(f"- On both: {', '.join(both) or 'none'}. On the screen, not his list: {', '.join(only_screen) or 'none'}. His list, not on the screen: {', '.join(only_his)}.")
-        B.append("- When they disagree for a month or two, the sector call is the thing to re-examine: in his golden window the 6-month screen made +32%, a 12-month screen −8.5%, his list +34–48%.")
-        B.append("")
-    B.append("Rules in one line: entries next morning only, never before 7:00 AM PT, limit orders cancelled at noon, void on a 3% gap up, one name per slot, never add to a loser, margin off, every exit at the close that hits it. Full board: stocks/latest.md.")
+    B.append("How to act on this: buy only at the open and after 7:00 AM PT, with a limit order you cancel at noon if it hasn't filled. One name per slot. Never add to a loser. No margin. Every exit happens at the close that hits its level. Every number above comes from the feed; the full table is stocks/latest.md.")
     B.append("")
     B.append("Taps: **Placing orders tomorrow** · **Sitting out** · **Rule question for Claude**")
 
@@ -406,7 +444,7 @@ def main():
     for t in ["SPY", "QQQ", "SMH", "IWM"]:
         s = C_all[t]
         O.append(f"| {t} | {s[d]:.1f} | {pct(s[d]/s.iloc[i-1]-1)} | {pct(s[d]/s.iloc[i-5]-1)} | {pct(s[d]/s.iloc[i-21]-1)} | {pct(s[d]/s.rolling(50).mean()[d]-1)} | {pct(s[d]/s.rolling(200).mean()[d]-1)} |")
-    O += ["", B[4], B[5], "", "## The list", "",
+    O += ["", regime_dense[0], regime_dense[1], "", "## The list", "",
           "| Name | Close | 1d | 5d | 5d vs sector | 21d | 63d (rank) | Off 21d hi | Off 52w hi | RSI2 | RSI14 | z20 | vs 50d | vs 200d | ATR% | Vol | Short % | Analyst tgt (upside, n) | Earnings |",
           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in WATCH:
@@ -434,7 +472,7 @@ def main():
         eng = "D" if rows[t]["sigD"] else "L"; lv = levels(t, eng)
         O.append(f"| {t} | {eng} | {rows[t]['close']:.2f} | {lv['stop']:.2f} | {int(lv['trail']*100)}% off the highest close | {lv['N']} sessions | {lv['line']:.2f} | {lv['void']:.2f} |")
     if not sigs: O.append("| — | nothing fires without a skip | | | | | | |")
-    O += ["", "## His positions", ""] + [l for l in B[B.index("## His positions") + 1:] if l.startswith("- ")][:len(positions) or 1]
+    O += ["", "## His positions", ""] + pos_lines
     O += ["", "## Headlines, last 5 days (Google News; titles and sources only, nothing claimed as cause)", ""]
     for t in research or []:
         for dd, src, title, link in heads.get(t, [])[:3]:
@@ -442,7 +480,7 @@ def main():
     if flags:
         O += ["", "### News flags (SKIP by rule)"] + [f"- **{t}** {dd} · {src}: {title}" for t, fl in flags.items() for dd, src, title in fl[:3]]
     if screen:
-        O += ["", "## Monthly mechanical screen", ""] + [l for l in B if l.startswith("- Screen:") or l.startswith("- On both:")]
+        O += ["", "## Monthly mechanical screen", ""] + screen_lines
     O += ["", "---", f"Generated {now.strftime('%Y-%m-%d %H:%M %Z')} by stock-bot/nightly.py (round-3 rules). Numbers from Yahoo Finance; headlines from Google News RSS. No model wrote this file."]
 
     (out / "brief.md").write_text("\n".join(B) + "\n")
